@@ -8,8 +8,12 @@ rem - no Windows scripts in the zip: me3 opens sekiro-coop.me3 on a double-click
 rem   play.sh is for Linux / Steam Deck, where me3 is often not on PATH yet (~/.local/bin).
 rem The text files come from ship-public\ and the licenses from the public repo's files here.
 setlocal
-call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" 10.0.26100.0 >nul || exit /b 1
-set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+set "VCVARS="
+if exist "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+if not defined VCVARS if exist "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+if not defined VCVARS (echo vcvars64.bat not found & exit /b 1)
+call "%VCVARS%" >nul || exit /b 1
+set "PATH=C:\Program Files\Rust stable MSVC 1.99\bin;%USERPROFILE%\.cargo\bin;%PATH%"
 set "ROOT=%~dp0"
 set "ROOT=%ROOT:~0,-1%"
 set "CARGO_TARGET_DIR=%ROOT%\target-public"
