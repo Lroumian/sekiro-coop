@@ -231,8 +231,8 @@ pub fn session_header() {
     write_raw(
         secs,
         &format!(
-            "version: sekiro_coop v{} build {} (built epoch {built} = local {})",
-            crate::ui::MOD_VERSION,
+            "version: {} build {} (built epoch {built} = local {})",
+            crate::ui::version_label(),
             env!("COOP_GIT_HASH"),
             hms(built, off)
         ),

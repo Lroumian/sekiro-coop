@@ -158,6 +158,15 @@ fn post(f: impl FnOnce(&mut Commands)) {
 /// only in docs/JATKA-TASTA-MULTIPLAYER.md. 1.0.1-beta: SprjTask lookup retried (Nexus "no ini" reports). 1.0.2-beta: clean public build (build-public.cmd). 1.0.3-beta: Steam lobby AccessDenied explained, joiner without a host told how to use UDP. 1.0.4-beta: co-op items work on non-English games (template row by id). 1.0.5-beta: Kuro's Charm follows the host during a session. 1.0.6-beta: no void fall after a cutscene that changes the map, bosses scaled on every machine. 1.0.7-beta: a player who died in a boss fight follows the killer's post-boss warp, doors checked after every load, notice when the last run did not close normally. 1.0.8-beta: the joiner's own-world restore no longer wipes areas it never saw (closed doors, replayed cutscenes) and mirrors a world behind the host's, Sword Saint's gauge gap is no retreat, a stuck-input watchdog, a living player leaves a phase A wait.
 pub const MOD_VERSION: &str = "1.0.8-beta";
 
+/// LRM patch identity on top of upstream beta. Keep the `+lrm.N` form in UI/log;
+/// zip filenames replace `+` (see `docs/LRM.md`).
+pub const LRM_VERSION: &str = "1.0.8-beta+lrm.1";
+
+/// Overlay / log label: upstream beta + LRM patch in one string.
+pub fn version_label() -> String {
+    format!("sekiro_coop v{MOD_VERSION} ({LRM_VERSION})")
+}
+
 const YELLOW: [f32; 4] = [1.0, 0.85, 0.3, 1.0];
 /// Nameplate: full opacity up to this distance, then slowly lighter.
 const FADE_FROM_M: f32 = 100.0;
@@ -676,7 +685,7 @@ impl ImguiRenderLoop for Overlay {
             .bg_alpha(0.35)
             .no_inputs()
             .build(|| {
-                ui.text(format!("Co-op v{MOD_VERSION}: {}", status.net));
+                ui.text(format!("Co-op {LRM_VERSION}: {}", status.net));
                 if let Some(n) = &status.notice {
                     ui.text_colored(YELLOW, n);
                 }
@@ -889,6 +898,15 @@ mod tests {
 
     fn names(v: &[(u8, &str)]) -> Vec<(PeerId, String)> {
         v.iter().map(|(s, n)| (PeerId(*s), n.to_string())).collect()
+    }
+
+    #[test]
+    fn version_label_keeps_upstream_beta_and_lrm_patch() {
+        let s = version_label();
+        assert!(s.contains("1.0.8-beta"), "{s}");
+        assert!(s.contains("lrm.1"), "{s}");
+        assert!(s.contains(LRM_VERSION), "{s}");
+        assert_eq!(MOD_VERSION, "1.0.8-beta");
     }
 
     #[test]

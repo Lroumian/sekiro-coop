@@ -1,8 +1,10 @@
-SEKIRO TOGETHER 1.0.8 beta - quick guide
-=============================================
+SEKIRO TOGETHER LRM 1.0.8-beta+lrm.1 - quick guide
+==================================================
 
+LRM maintenance build on top of Sekiro Together 1.0.8-beta.
 Beta, still buggy. Back up your saves before playing.
-Full readme, known bugs and source: https://github.com/Tihvert/sekiro-coop
+Upstream readme / bugs: https://github.com/Tihvert/sekiro-coop
+This fork: https://github.com/Lroumian/sekiro-coop
 
 YOU NEED
 - Sekiro on Steam, version 1.06 (normal, unmodded)
