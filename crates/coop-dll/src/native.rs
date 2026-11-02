@@ -85,7 +85,12 @@ const WCM_PLAYER_SET: usize = 0x48;
 const SET_ENTRY: usize = 56;
 const CHR_MODEL: usize = 0x48;
 const CHR_MANIP: usize = 0x58;
+/// ChrIns+0x70 = chr type (RE-FINDINGS-2 § Ghost appearance). STATIC VERIFIED.
+const CHR_TYPE_FIELD: usize = 0x70;
 const CHR_TEAM: usize = 0x74;
+/// Same layout constants as `ghost::solid_shader_tick` — read-only on Native until LIVE verified.
+const ASM_MODEL: usize = 0x2150;
+const ASM_GHOST_SHADER: usize = 0xD8;
 const CHR_FLAGS_1A11: usize = 0x1A11;
 const CHR_MODULES: usize = 0x1FF8;
 const CHR_PGD: usize = 0x2000;
@@ -739,6 +744,102 @@ fn delete_chr(r: &Remote) {
     release_pgd(r.pgd_idx);
 }
 
+fn wants_native_solid_look() -> bool {
+    use crate::appearance::{appearance_control, AppearanceControl, AppearanceMode, AppearanceSource};
+    match appearance_control() {
+        AppearanceControl { source: AppearanceSource::Legacy, .. } => crate::tuning::native_solid(),
+        AppearanceControl { source: AppearanceSource::New, mode: AppearanceMode::Normal } => true,
+        AppearanceControl { source: AppearanceSource::New, mode: AppearanceMode::Phantom } => false,
+    }
+}
+
+/// Safe solid-vtable apply + REMOTE_LOOK diagnostics (spec rev2 state machine).
+/// `require_in_set`: periodic path must be true; spawn path may be false.
+fn apply_native_look(r: &Remote, player: Chr, stage: &str, require_in_set: bool) {
+    use crate::appearance::{
+        appearance_source_label, classify_player_ins_vptr, AppearanceMode, VptrClass,
+    };
+    use crate::appearance::appearance_control;
+
+    if require_in_set && !in_player_set(r) {
+        return;
+    }
+    let Some(vptr) = read_ptr(r.chr.0) else { return };
+    let stock = module_base() + PLAYER_INS_VT_RVA;
+    let solid = solid_vtable().unwrap_or(0);
+    let class = classify_player_ins_vptr(vptr, stock, solid);
+    let ctrl = appearance_control();
+    let want_solid = wants_native_solid_look();
+
+    if want_solid {
+        match class {
+            VptrClass::Stock => {
+                if let Some(copy) = solid_vtable() {
+                    if write(r.chr.0, copy) {
+                        log::line(&format!(
+                            "REMOTE_LOOK: source={} mode={:?} peer={:?} kind={:?} chr={:#x} pgd_slot={} vptr_class=stock->solid stage={stage} lifecycle=ok",
+                            appearance_source_label(),
+                            ctrl.mode,
+                            r.peer.map(|p| p.slot()),
+                            r.kind,
+                            r.chr.0,
+                            r.pgd_idx
+                        ));
+                    }
+                }
+            }
+            VptrClass::Solid => {}
+            VptrClass::Other => {
+                log_remote_look(r, player, stage, class, /*shader*/ None);
+            }
+        }
+    } else if matches!(ctrl.mode, AppearanceMode::Phantom) && matches!(ctrl.source, crate::appearance::AppearanceSource::New)
+    {
+        // Product phantom: leave stock; do not install solid.
+        if matches!(class, VptrClass::Other) {
+            log_remote_look(r, player, stage, class, None);
+        }
+    } else if !want_solid && matches!(class, VptrClass::Other) {
+        log_remote_look(r, player, stage, class, None);
+    }
+
+    // Read-only Native vs Local asm/+0xD8 probe (no Native shader write in LRM.1).
+    let remote_asm = read_ptr(r.chr.0 + ASM_MODEL);
+    let remote_shader = remote_asm.and_then(|a| read::<f32>(a + ASM_GHOST_SHADER));
+    let local_asm = read_ptr(player.0 + ASM_MODEL);
+    let local_shader = local_asm.and_then(|a| read::<f32>(a + ASM_GHOST_SHADER));
+    if stage == "spawn" || stage == "recheck" {
+        log::line(&format!(
+            "REMOTE_LOOK_PROBE: kind=native chr={:#x} asm={remote_asm:x?} ghost_shader={remote_shader:?} local_asm={local_asm:x?} local_shader={local_shader:?} (Native shader clear UNVERIFIED — read only)",
+            r.chr.0
+        ));
+    }
+}
+
+fn log_remote_look(r: &Remote, player: Chr, stage: &str, vclass: crate::appearance::VptrClass, _shader: Option<f32>) {
+    use crate::appearance::{appearance_control, appearance_source_label};
+    let c = r.chr.0;
+    let row = |x: usize| -> Option<i32> {
+        let f = vfn(x, SLOT_PHANTOM_ROW)?;
+        let f: extern "C" fn(usize) -> i32 = unsafe { std::mem::transmute(f) };
+        Some(f(x))
+    };
+    let draw = read_ptr(c + CHR_MODEL).and_then(|m| read::<u8>(m + 0x23));
+    let ctrl = appearance_control();
+    log::line(&format!(
+        "REMOTE_LOOK: source={} mode={:?} peer={:?} kind=native chr={c:#x} pgd_slot={} vptr_class={vclass:?} chr_type={:?} team={:?} phantom_row={:?} local_phantom_row={:?} draw_group={draw:?} stage={stage} lifecycle={}",
+        appearance_source_label(),
+        ctrl.mode,
+        r.peer.map(|p| p.slot()),
+        r.pgd_idx,
+        read::<u32>(c + CHR_TYPE_FIELD),
+        read::<u8>(c + CHR_TEAM),
+        row(c),
+        row(player.0),
+        if in_player_set(r) { "in_set" } else { "not_in_set" }
+    ));
+}
+
 /// The "Must check live" list of RE-FINDINGS-2, for one remote.
 fn log_checks(r: &Remote, player: Chr, stage: &str) {
     let c = r.chr.0;
@@ -1161,15 +1262,9 @@ impl Native {
     /// Look options, applied right after the factory (before the model is
     /// built in a later frame). The dress waits `native_dress_delay_ms` (tick).
     fn finish_spawn(&self, r: &mut Remote, player: Chr) {
-        if crate::tuning::native_solid() {
-            let plain = module_base() + PLAYER_INS_VT_RVA;
-            match (read_ptr(r.chr.0), solid_vtable()) {
-                (Some(v), Some(copy)) if v == plain => {
-                    write(r.chr.0, copy);
-                }
-                (v, _) => log::line(&format!("native: solid look skipped (vtable {v:x?})")),
-            }
-        }
+        // Creation path: may run before the chr is in the player set (same as
+        // pre-LRM). Periodic recheck requires in_player_set — see apply_native_look.
+        apply_native_look(r, player, "spawn", /* require_in_set */ false);
         if !crate::tuning::native_dress() {
             log::line("native: not dressed (native_dress = 0): the remote keeps its CharaInitParam equipment");
             return;
@@ -1393,6 +1488,20 @@ impl Native {
         }
 
         self.dress_when_due(player);
+
+        // Low-frequency solid re-apply / REMOTE_LOOK (≤ ~0.1 Hz per remote).
+        static LOOK_RECHECK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let prev = LOOK_RECHECK.load(std::sync::atomic::Ordering::Relaxed);
+        if now_ms.saturating_sub(prev) >= 10_000 {
+            LOOK_RECHECK.store(now_ms, std::sync::atomic::Ordering::Relaxed);
+            for r in self.remotes.iter().chain(self.tests.iter()) {
+                apply_native_look(r, player, "recheck", true);
+            }
+        }
 
         // The tee counts packets for N0 and forwards them for N1.
         let want_tee = forwarding() || !self.tests.is_empty();

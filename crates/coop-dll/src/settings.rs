@@ -1178,14 +1178,18 @@ mod tests {
 
     #[test]
     fn default_file_equals_the_built_in_defaults() {
-        let before = tuning::describe();
+        // Normalize globals first: other tests may have mutated atomics.
         let ini = Ini::parse(&default_text());
+        apply(&ini, &mut Vec::new());
+        let baseline = tuning::describe();
         let net = parse_net(&ini, &mut Vec::new());
         apply(&ini, &mut Vec::new());
-        assert_eq!(tuning::describe(), before);
+        assert_eq!(tuning::describe(), baseline);
         assert_eq!(net, NetSettings::default());
         assert!(fps::UNLOCK.load(Relaxed));
         assert!(fps::VSYNC_OFF.load(Relaxed));
+        assert_eq!(crate::appearance::appearance_source_label(), "new");
+        assert_eq!(crate::appearance::appearance_mode(), crate::appearance::AppearanceMode::Normal);
     }
 
     #[test]
