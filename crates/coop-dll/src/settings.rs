@@ -407,6 +407,29 @@ fn apply(ini: &Ini, warn: &mut Vec<String>) {
     tuning::GHOST_HKB.store(ini.flag("ghost_hkb", false, warn), Relaxed);
     tuning::GHOST_WEVENT.store(ini.flag("ghost_wevent", false, warn), Relaxed);
     tuning::GHOST_SOLID.store(ini.num("ghost_solid", 1, 0, 2, warn) as u8, Relaxed);
+    // Product appearance after legacy knobs are known (new key wins when present).
+    {
+        use crate::appearance::{resolve_appearance, store_control};
+        let native_solid = ini.flag("native_solid", true, warn);
+        let ghost_solid = tuning::GHOST_SOLID.load(Relaxed);
+        let key = "remote_player_appearance";
+        let ctrl = match ini.get(key) {
+            None => resolve_appearance(None, native_solid, ghost_solid),
+            Some(v) => {
+                let raw = v.as_str();
+                if !raw.is_empty()
+                    && !raw.eq_ignore_ascii_case("normal")
+                    && !raw.eq_ignore_ascii_case("phantom")
+                {
+                    warn.push(format!(
+                        "{key} = {raw:?} is not normal/phantom, using normal"
+                    ));
+                }
+                resolve_appearance(Some(raw), native_solid, ghost_solid)
+            }
+        };
+        store_control(ctrl);
+    }
     tuning::GHOST_MOTION.store(ini.flag("ghost_motion", true, warn), Relaxed);
     tuning::JOIN_RELOAD.store(ini.flag("join_reload", true, warn), Relaxed);
     tuning::ENEMY_NO_MOVE.store(ini.flag("enemy_no_move", false, warn), Relaxed);
@@ -634,6 +657,10 @@ boss_persist_on_death = 1
 stealth_window_m = 15
 
 [DISPLAY]
+; Remote player look: normal = no phantom glow (LRM default for new files), phantom = stock
+; online/ghost look. If you omit this key entirely, the old DEBUG native_solid / ghost_solid
+; knobs keep their previous behaviour (no silent upgrade change).
+remote_player_appearance = normal
 ; 1 = frame rate unlocked to 120 fps.
 fps_unlock = 1
 ; 0 = the game's vsync is turned off (needed for 120 fps on a 60 Hz screen, tears a little).
@@ -1085,6 +1112,51 @@ mod tests {
 
     fn default_text() -> String {
         TEMPLATE.replace("@PASSWORD@", "").replace("@NAME@", "").replace("@TRANSPORT@", "auto").replace("@HOST@", "")
+    }
+
+    /// Appearance atomics are process-global; serialize these three tests.
+    fn with_appearance_lock<R>(f: impl FnOnce() -> R) -> R {
+        use std::sync::{Mutex, OnceLock};
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let _g = LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        f()
+    }
+
+    #[test]
+    fn appearance_absent_key_keeps_legacy_source() {
+        with_appearance_lock(|| {
+            let ini = Ini::parse("native_solid = 0\nghost_solid = 0\n");
+            let mut warn = Vec::new();
+            apply(&ini, &mut warn);
+            assert_eq!(crate::appearance::appearance_source_label(), "legacy");
+            assert!(!crate::tuning::native_solid());
+            assert_eq!(crate::tuning::ghost_solid(), 0);
+        });
+    }
+
+    #[test]
+    fn appearance_new_key_wins_over_native_solid_off() {
+        with_appearance_lock(|| {
+            let ini = Ini::parse("remote_player_appearance = normal\nnative_solid = 0\nghost_solid = 0\n");
+            let mut warn = Vec::new();
+            apply(&ini, &mut warn);
+            assert_eq!(crate::appearance::appearance_source_label(), "new");
+            assert_eq!(crate::appearance::appearance_mode(), crate::appearance::AppearanceMode::Normal);
+            // Legacy knobs still parse for debug, but product source is new.
+            assert!(!crate::tuning::native_solid());
+        });
+    }
+
+    #[test]
+    fn appearance_invalid_value_warns_and_uses_normal() {
+        with_appearance_lock(|| {
+            let ini = Ini::parse("remote_player_appearance = subtle\n");
+            let mut warn = Vec::new();
+            apply(&ini, &mut warn);
+            assert!(warn.iter().any(|w| w.contains("remote_player_appearance")), "{warn:?}");
+            assert_eq!(crate::appearance::appearance_mode(), crate::appearance::AppearanceMode::Normal);
+            assert_eq!(crate::appearance::appearance_source_label(), "new");
+        });
     }
 
     #[test]

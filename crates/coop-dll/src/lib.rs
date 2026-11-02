@@ -7,6 +7,7 @@
 //! appearing while playing, and the game runs 10 minutes without crashing.
 
 mod activation;
+mod appearance;
 mod artfx;
 mod audit;
 mod backups;
