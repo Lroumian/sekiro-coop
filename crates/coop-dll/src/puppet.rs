@@ -981,7 +981,7 @@ impl Puppet {
         }
         // Solid look: keep the ghost shader value cleared.
         if let Some(g) = self.spawned
-            && crate::tuning::ghost_solid() >= 1
+            && crate::appearance::effective_ghost_solid() >= 1
         {
             ghost::solid_shader_tick(g);
         }
@@ -1025,13 +1025,14 @@ impl Puppet {
                 Ok(g) => {
                     // Solid Wolf instead of the phantom look (before the model
                     // is built, so right after the factory).
-                    let solid = crate::tuning::ghost_solid();
+                    let solid = crate::appearance::effective_ghost_solid();
                     if solid >= 1
                         && let Err(e) = ghost::make_solid(g)
                     {
                         log::line(&format!("ghost: solid look failed: {e}"));
                     }
                     let _ = ghost::dress_like(g, player);
+                    // Legacy ghost_solid=2 only (New+Normal stays at level 1 — no ChrType rewrite).
                     if solid >= 2 {
                         ghost::set_other_player_type(g, player);
                     }

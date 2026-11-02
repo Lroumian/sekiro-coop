@@ -64,6 +64,25 @@ pub fn store_control(c: AppearanceControl) {
     APPEARANCE_MODE.store(c.mode as u8, Ordering::Relaxed);
 }
 
+/// Effective `ghost_solid`-style level for ReplayGhost fallback under product/legacy rules.
+/// New+Normal → 1 (make_solid + shader tick, no chr-type 8). New+Phantom → 0.
+pub fn effective_ghost_solid() -> u8 {
+    match appearance_control() {
+        AppearanceControl {
+            source: AppearanceSource::Legacy,
+            ..
+        } => crate::tuning::ghost_solid(),
+        AppearanceControl {
+            source: AppearanceSource::New,
+            mode: AppearanceMode::Normal,
+        } => 1,
+        AppearanceControl {
+            source: AppearanceSource::New,
+            mode: AppearanceMode::Phantom,
+        } => 0,
+    }
+}
+
 /// `remote_player_appearance`: `None` = key absent; `Some(v)` = key present (even if empty).
 /// `native_solid` / `ghost_solid` are ignored for product mode when the new key is present;
 /// they remain available for Legacy callers.
@@ -164,5 +183,13 @@ mod tests {
         assert_eq!(appearance_source_label(), "new");
         store_control(AppearanceControl { source: AppearanceSource::Legacy, mode: AppearanceMode::Normal });
         assert_eq!(appearance_source_label(), "legacy");
+    }
+
+    #[test]
+    fn effective_ghost_solid_follows_product_mode() {
+        store_control(AppearanceControl { source: AppearanceSource::New, mode: AppearanceMode::Normal });
+        assert_eq!(effective_ghost_solid(), 1);
+        store_control(AppearanceControl { source: AppearanceSource::New, mode: AppearanceMode::Phantom });
+        assert_eq!(effective_ghost_solid(), 0);
     }
 }
